@@ -4,6 +4,10 @@ import amazed.maze.Maze;
 import amazed.maze.Player;
 
 import java.util.*;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.ForkJoinPool;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
@@ -25,6 +29,7 @@ public class ForkJoinSolver
      *
      * @param maze   the maze to be searched
      */
+
     public ForkJoinSolver(Maze maze)
     {
         super(maze);
@@ -64,26 +69,28 @@ public class ForkJoinSolver
         return parallelSearch();
     }
 
-    // lägg till predacessorrrrrr
 
     private List<Integer> parallelSearch() {
 
+        //if (visited.contains(start)){
+          //  return null;
+        //}
+
         List<ForkJoinSolver> children = new ArrayList<>();
         final int originalStart = maze.start(); // Defines maze start
+
+        // Maybe atomic something
 
         // Create a player for thread, forks also get player
         int player = maze.newPlayer(start);
 
         frontier.push(start);
 
-        visited.add(start);
-
         while (!frontier.isEmpty()) {
 
             int current = frontier.pop();
 
-            // Animate
-            maze.move(player, current);
+            maze.move(player,current);
 
             // Goal found, pathFromTo from originalStart to current node
             if (maze.hasGoal(current)) {
@@ -92,24 +99,36 @@ public class ForkJoinSolver
 
             List<Integer> unvisitedNeighbors = new ArrayList<>();
 
+            /*
             for (int nb : maze.neighbors(current)) {
-                if (!visited.contains(nb)) {
-                    visited.add(nb);
-                    predecessor.put(nb, current);
+                if (visited.add(nb)) {
                     unvisitedNeighbors.add(nb);
+                    predecessor.putIfAbsent(nb, current);
+                    System.out.println(nb + "is unvisited");
                 }
             }
+
+             */
+
+            for (int nb : maze.neighbors(current)) {
+                if (!visited.add(nb)) {
+                    continue;
+                }
+                    unvisitedNeighbors.add(nb);
+                    predecessor.putIfAbsent(nb, current);
+                    System.out.println(nb + "is unvisited");
+            }
+
+
+
+            visited.add(start);
 
             // If unvisited neighbors is empty, continue
             if (unvisitedNeighbors.isEmpty()) {
                 continue;
             }
 
-            // One neighbor, continue search
-            if (unvisitedNeighbors.size() == 1) {
-                frontier.push(unvisitedNeighbors.get(0));
-                continue;
-            }
+            frontier.push(unvisitedNeighbors.get(0));
 
             // More than one neighbor, copy parent info to child, fork and continue parent search
             for (int i = 1; i < unvisitedNeighbors.size(); i++) {
@@ -120,20 +139,28 @@ public class ForkJoinSolver
 
                 // Copy DFS state into child
                 child.start = nb;
-                child.visited = new HashSet<>(visited);
+                child.visited = this.visited;
                 child.predecessor = new HashMap<>(predecessor);
-                child.frontier = new Stack<>();
 
                 child.fork();
                 children.add(child);
             }
 
-            frontier.push(unvisitedNeighbors.get(0));
+            // When exiting, join children and return if result != null
+            for (ForkJoinSolver f : children) {
+                if (f.isDone()) {
+                    List<Integer> result = f.join();
+                    if (result != null) {
+                        return result;
+                    }
+                }
+            }
         }
 
         // When exiting, join children and return if result != null
         for (ForkJoinSolver f : children) {
             List<Integer> result = f.join();
+
             if (result != null) {
                 return result;
             }
@@ -143,3 +170,7 @@ public class ForkJoinSolver
     }
 
     }
+
+
+    // Set<Integer> childVisits = f.visited;
+//                visited.addAll(childVisits);
