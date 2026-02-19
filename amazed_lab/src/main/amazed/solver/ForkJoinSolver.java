@@ -4,10 +4,7 @@ import amazed.maze.Maze;
 import amazed.maze.Player;
 
 import java.util.*;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.ForkJoinPool;
-import java.util.concurrent.ThreadPoolExecutor;
-import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
@@ -30,9 +27,18 @@ public class ForkJoinSolver
      * @param maze   the maze to be searched
      */
 
+    AtomicReference<List<Integer>> solution;
+    Set<Integer> claimed;
+
+    //int player;
+
     public ForkJoinSolver(Maze maze)
     {
         super(maze);
+        this.visited = new ConcurrentSkipListSet<>();
+        this.predecessor = new ConcurrentHashMap<>();
+        this.solution = new AtomicReference<>(null);
+        this.claimed = new ConcurrentSkipListSet<>(); // Maybe ConcurrentHashMap.newKeySet();
     }
 
     /**
@@ -48,9 +54,27 @@ public class ForkJoinSolver
      */
     public ForkJoinSolver(Maze maze, int forkAfter)
     {
-        this(maze);
+        super(maze);
         this.forkAfter = forkAfter;
+        this.visited = new ConcurrentSkipListSet<>();
+        this.predecessor = new ConcurrentHashMap<>();
+        this.solution = new AtomicReference<>(null);
+        this.claimed = new ConcurrentSkipListSet<>();
+
     }
+
+    /*
+    public ForkJoinSolver(Maze maze, ConcurrentSkipListSet<Integer> visited, ConcurrentHashMap<Integer, Integer> predecessor,
+                          AtomicReference<List<Integer>> solution, ConcurrentSkipListSet<Integer> claimed)
+    {
+        super(maze);
+        this.visited = new ConcurrentSkipListSet<>();
+        this.predecessor = new ConcurrentHashMap<>();
+        this.solution = new AtomicReference<>(null);
+        this.claimed = new ConcurrentSkipListSet<>();
+
+    }
+     */
 
     /**
      * Searches for and returns the path, as a list of node
@@ -69,65 +93,62 @@ public class ForkJoinSolver
         return parallelSearch();
     }
 
-
     private List<Integer> parallelSearch() {
 
-        //if (visited.contains(start)){
-          //  return null;
-        //}
+        if (solution.get() != null){
+            return solution.get();
+        }
 
         List<ForkJoinSolver> children = new ArrayList<>();
         final int originalStart = maze.start(); // Defines maze start
-
-        // Maybe atomic something
 
         // Create a player for thread, forks also get player
         int player = maze.newPlayer(start);
 
         frontier.push(start);
+        claimed.add(start);
 
+        //Check frontier
         while (!frontier.isEmpty()) {
 
+            // If solution found, end
+            if (solution.get() != null){
+                return solution.get();
+            }
+
+            //Only add to visited right before moving
             int current = frontier.pop();
 
-            maze.move(player,current);
+            if (!visited.add(current)){
+                continue;
+            } else maze.move(player, current);
+
+
 
             // Goal found, pathFromTo from originalStart to current node
             if (maze.hasGoal(current)) {
-                return pathFromTo(originalStart, current);
+                List<Integer> solved = pathFromTo(originalStart, current);
+                solution.compareAndSet(null, solved);
+                return solved;
             }
 
+
+            //Add all available neighbors to "claimed", reserves them for visiting
             List<Integer> unvisitedNeighbors = new ArrayList<>();
 
-            /*
             for (int nb : maze.neighbors(current)) {
-                if (visited.add(nb)) {
-                    unvisitedNeighbors.add(nb);
+                if (claimed.add(nb)) {
                     predecessor.putIfAbsent(nb, current);
-                    System.out.println(nb + "is unvisited");
+                    unvisitedNeighbors.add(nb);
                 }
             }
-
-             */
-
-            for (int nb : maze.neighbors(current)) {
-                if (!visited.add(nb)) {
-                    continue;
-                }
-                    unvisitedNeighbors.add(nb);
-                    predecessor.putIfAbsent(nb, current);
-                    System.out.println(nb + "is unvisited");
-            }
-
-
-
-            visited.add(start);
 
             // If unvisited neighbors is empty, continue
             if (unvisitedNeighbors.isEmpty()) {
                 continue;
             }
 
+            //First neighbor, business as usual
             frontier.push(unvisitedNeighbors.get(0));
 
             // More than one neighbor, copy parent info to child, fork and continue parent search
@@ -138,22 +159,16 @@ public class ForkJoinSolver
                 ForkJoinSolver child = new ForkJoinSolver(maze);
 
                 // Copy DFS state into child
+                children.add(child);
+
                 child.start = nb;
                 child.visited = this.visited;
-                child.predecessor = new HashMap<>(predecessor);
+                child.predecessor = new ConcurrentHashMap<>(predecessor);
+                child.solution = this.solution;
+                child.claimed = this.claimed;
 
+                child.frontier.push(nb);
                 child.fork();
-                children.add(child);
-            }
-
-            // When exiting, join children and return if result != null
-            for (ForkJoinSolver f : children) {
-                if (f.isDone()) {
-                    List<Integer> result = f.join();
-                    if (result != null) {
-                        return result;
-                    }
-                }
             }
         }
 
@@ -165,12 +180,8 @@ public class ForkJoinSolver
                 return result;
             }
         }
-
-        return null;
+        //Return if frontier = 0
+        return solution.get();
     }
 
-    }
-
-
-    // Set<Integer> childVisits = f.visited;
-//                visited.addAll(childVisits);
+}
